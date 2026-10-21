@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Aetheris: Planeta de Partículas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050508;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            touch-action: none;
+        }
+        #webgl-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+        }
+        .glass-panel {
+            background: rgba(10, 10, 15, 0.65);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px rgba(255, 255, 255, 0.1) solid;
+        }
+        @keyframes pulse-orange {
+            0%, 100% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.2); opacity: 1; }
+        }
+        .pulse-indicator {
+            animation: pulse-orange 2s infinite ease-in-out;
+        }
+        .gesture-panel-mobile {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.35s ease, padding 0.25s ease, opacity 0.25s ease;
+            opacity: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+        }
+        .gesture-panel-mobile.open {
+            max-height: 520px;
+            opacity: 1;
+            padding-top: 0.75rem;
+            padding-bottom: 0.75rem;
+        }
+        .desktop-status-text {
+            display: inline;
+        }
+        @media (max-width: 768px) {
+            #camera-status {
+                min-width: 30px;
+                width: 30px;
+                height: 30px;
+                justify-content: center;
+                padding: 0;
+            }
+            .desktop-status-text {
+                display: none !important;
+            }
+            .desktop-only-gesture {
+                display: none !important;
+            }
+            #gesture-panel-content:not(.open) {
+                display: none;
+            }
+            #gesture-panel-content.open {
+                display: flex;
+            }
+            main {
+                align-items: center;
+            }
+        }
+        @media (min-width: 769px) {
+            .desktop-only-gesture {
+                display: none !important;
+            }
+        }
+        @media (max-width: 420px) {
+            #gesture-panel {
+                width: 52%;
+                padding: 0.65rem;
+            }
+            #webcam-panel {
+                width: 42%;
+                height: 115px;
+            }
+            #gesture-panel-content p {
+                overflow-wrap: anywhere;
+            }
+            header > div:first-child {
+                max-width: 72%;
+            }
+            footer {
+                font-size: 7px;
+            }
+        }
+        @media (max-height: 600px) and (max-width: 768px) {
+            #webcam-panel {
+                height: 90px;
+            }
+            .gesture-panel-mobile.open {
+                max-height: 280px;
+                overflow-y: auto;
+            }
+        }
+        @media (max-width: 768px) {
+            #gesture-panel {
+            position: absolute;
+            top: 41px;
+            right: 12px;
+            left: auto;
+            width: 25%;
+            align-self: auto;
+           z-index: 3;
+           }
+        }
+
+    </style>
+</head>
+<body class="text-white select-none">
+
+    <canvas id="webgl-canvas"></canvas>
+
+    <div class="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between p-3 sm:p-6">
+        
+        <header class="flex justify-between items-start w-full pointer-events-auto gap-2">
+            <div class="glass-panel p-3 sm:p-4 rounded-2xl max-w-[60%] sm:max-w-md">
+                <h1 class="text-lg sm:text-2xl font-black bg-gradient-to-r from-orange-500 via-amber-400 to-yellow-300 bg-clip-text text-transparent uppercase tracking-wider">Aetheris</h1>
+                <p class="text-[10px] sm:text-xs text-gray-400 mt-0.5 sm:mt-1 leading-tight">Controla el universo en 3D con gestos de tu mano</p>
+            </div>
+            <div id="camera-status" class="glass-panel px-3 py-1.5 sm:px-4 sm:py-2 rounded-full flex items-center gap-2 shrink-0">
+                <span class="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-red-500 pulse-indicator" id="status-dot"></span>
+                <span class="text-[9px] sm:text-xs font-semibold tracking-wide uppercase" id="status-text">
+                    <span class="desktop-status-text">Inicializando Webcam...</span>
+                </span>
+            </div>
+        </header>
+
+        <main class="flex flex-1 items-center justify-between w-full my-2 sm:my-4 gap-2">
+            
+            <div id="gesture-panel" class="glass-panel p-3 sm:p-5 rounded-2xl w-[45%] sm:w-72 pointer-events-auto flex flex-col gap-2 sm:gap-4 self-center relative">
+                <button id="gesture-toggle-btn" class="flex items-center justify-between w-full text-left">
+                    <h2 class="text-xs sm:text-sm font-bold text-orange-400 tracking-wider uppercase">
+                        Gestos
+                    </h2>
+                    <span id="gesture-arrow" class="text-orange-400 text-sm transition-transform duration-300">▼</span>
+                </button>
+                <h2 class="desktop-only-gesture text-xs sm:text-sm font-bold text-orange-400 tracking-wider uppercase border-b border-white/10 pb-2">
+                    Gesto Detectado
+                </h2>
+                
+                <div id="gesture-panel-content" class="gesture-panel-mobile flex flex-col gap-2 sm:gap-3">
+                    <div id="gesture-rotate" class="flex items-center gap-2 sm:gap-3 p-1.5 sm:p-2 rounded-lg bg-white/5 border border-white/0 transition-all duration-300">
+                        <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400 font-bold text-[10px] sm:text-sm shrink-0">🖐️</div>
+                        <div class="min-w-0">
+                            <p class="text-[10px] sm:text-xs font-bold text-white leading-tight">Mano Abierta / Rotación</p>
+                            <p class="text-[8px] sm:text-[10px] text-gray-400 leading-tight">Rota tu mano para orbitar el planeta</p>
+                        </div>
+                    </div>
+
+                    <div id="gesture-in" class="flex items-center gap-2 sm:gap-3 p-1.5 sm:p-2 rounded-lg bg-white/5 border border-white/0 transition-all duration-300">
+                        <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-400 font-bold text-[10px] sm:text-sm shrink-0">🚀</div>
+                        <div class="min-w-0">
+                            <p class="text-[10px] sm:text-xs font-bold text-white leading-tight">Acercar (Cinco Dedos)</p>
+                            <p class="text-[8px] sm:text-[10px] text-gray-400 leading-tight">Acerca una mano abierta hacia la cámara</p>
+                        </div>
+                    </div>
+
+                    <div id="gesture-out" class="flex items-center gap-2 sm:gap-3 p-1.5 sm:p-2 rounded-lg bg-white/5 border border-white/0 transition-all duration-300">
+                        <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-[10px] sm:text-sm shrink-0">✊</div>
+                        <div class="min-w-0">
+                            <p class="text-[10px] sm:text-xs font-bold text-white leading-tight">Alejar (Puño Cerrado)</p>
+                            <p class="text-[8px] sm:text-[10px] text-gray-400 leading-tight">Cierra el puño y aléjalo para alejar zoom</p>
+                        </div>
+                    </div>
+
+                    <div class="text-[9px] sm:text-[11px] text-gray-400 border-t border-white/10 pt-2 sm:pt-3 flex flex-col gap-1 sm:gap-1.5">
+                        <div class="flex justify-between">
+                            <span>Distancia:</span>
+                            <span id="metric-dist" class="font-mono text-orange-400">45.00</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Vel. Zoom:</span>
+                            <span id="metric-speed" class="font-mono text-orange-400">0.00</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Puntos:</span>
+                            <span id="metric-landmarks" class="font-mono text-orange-400">0 / 21</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="webcam-panel" class="relative w-[45%] sm:w-64 h-32 sm:h-48 rounded-2xl overflow-hidden glass-panel border-2 border-orange-500/20 pointer-events-auto self-end bg-black shrink-0">
+                <video id="webcam" class="w-full h-full object-cover scale-x-[-1] opacity-0" autoplay playsinline muted></video>
+                <canvas id="output-canvas" class="absolute inset-0 w-full h-full object-cover scale-x-[-1]"></canvas>
+                <div class="absolute bottom-1 left-1 sm:bottom-2 sm:left-2 bg-black/70 px-1.5 py-0.5 rounded text-[8px] sm:text-[10px] font-mono tracking-widest uppercase">
+                    🔴
+                </div>
+            </div>
+        </main>
+
+        <footer class="w-full flex flex-col sm:flex-row justify-between items-center text-[8px] sm:text-[11px] text-gray-500 pointer-events-auto gap-1">
+            <p class="text-center sm:text-left">© Interactive Particle Cosmos.</p>
+            <div class="flex gap-2 sm:gap-4">
+                <span>WebGL 2.0</span>
+                <span>•</span>
+                <span>FPS: <span id="fps-counter" class="font-mono text-orange-500">60</span></span>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const outputCanvas = document.getElementById('output-canvas');
+        const canvasCtx = outputCanvas.getContext('2d');
+        
+        const uiStatusDot = document.getElementById('status-dot');
+        const uiStatusText = document.getElementById('status-text');
+        const uiMetricDist = document.getElementById('metric-dist');
+        const uiMetricSpeed = document.getElementById('metric-speed');
+        const uiMetricLandmarks = document.getElementById('metric-landmarks');
+        const uiFpsCounter = document.getElementById('fps-counter');
+        
+        const uiGestureRotate = document.getElementById('gesture-rotate');
+        const uiGestureIn = document.getElementById('gesture-in');
+        const uiGestureOut = document.getElementById('gesture-out');
+        
+        const gestureToggleBtn = document.getElementById('gesture-toggle-btn');
+        const gesturePanelContent = document.getElementById('gesture-panel-content');
+        const gestureArrow = document.getElementById('gesture-arrow');
+
+        const CAMERA_MIN_DISTANCE = 15;
+        const CAMERA_MAX_DISTANCE = 120;
+        
+        let targetCameraRadius = 45;
+        let currentCameraRadius = 45;
+        let cameraPhi = Math.PI / 2;
+        let cameraTheta = 0;
+        
+        let zoomSpeed = 0;
+        let isFistGesture = false;
+        let isOpenHandGesture = false;
+
+        const canvas3D = document.getElementById('webgl-canvas');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050508, 0.008);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffa500, 1.5);
+        directionalLight.position.set(10, 20, 15);
+        scene.add(directionalLight);
+
+        function createParticleTexture(colorHex, isBright = false) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+
+            const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            if (isBright) {
+                gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+                gradient.addColorStop(0.2, colorHex);
+                gradient.addColorStop(0.5, 'rgba(249, 115, 22, 0.4)');
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            } else {
+                gradient.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+                gradient.addColorStop(0.3, colorHex);
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            }
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 64, 64);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        const orangeParticleTexture = createParticleTexture('#ff6a00', true);
+        const whiteParticleTexture = createParticleTexture('#ffffff', false);
+
+        const planetGroup = new THREE.Group();
+        scene.add(planetGroup);
+
+        const planetParticleCount = 18000;
+        const planetGeometry = new THREE.BufferGeometry();
+        const planetPositions = new Float32Array(planetParticleCount * 3);
+        const planetColors = new Float32Array(planetParticleCount * 3);
+        
+        const planetRadius = 8;
+        const colorOrange = new THREE.Color('#ff5d00');
+        const colorYellow = new THREE.Color('#ffd000');
+        const colorRed = new THREE.Color('#ff003c');
+
+        for (let i = 0; i < planetParticleCount; i++) {
+            const u = Math.random();
+            const v = Math.random();
+            const theta = u * 2.0 * Math.PI;
+            const phi = Math.acos(2.0 * v - 1.0);
+            
+            let r;
+            if (Math.random() < 0.65) {
+                r = planetRadius + (Math.random() - 0.5) * 0.3;
+            } else {
+                r = Math.pow(Math.random(), 1.5) * planetRadius;
+            }
+
+            const x = r * Math.sin(phi) * Math.cos(theta);
+            const y = r * Math.sin(phi) * Math.sin(theta);
+            const z = r * Math.cos(phi);
+
+            planetPositions[i * 3] = x;
+            planetPositions[i * 3 + 1] = y;
+            planetPositions[i * 3 + 2] = z;
+
+            const randomColorChoice = Math.random();
+            let finalColor = colorOrange;
+            if (randomColorChoice > 0.8) {
+                finalColor = colorYellow;
+            } else if (randomColorChoice < 0.15) {
+                finalColor = colorRed;
+            }
+
+            planetColors[i * 3] = finalColor.r;
+            planetColors[i * 3 + 1] = finalColor.g;
+            planetColors[i * 3 + 2] = finalColor.b;
+        }
+
+        planetGeometry.setAttribute('position', new THREE.BufferAttribute(planetPositions, 3));
+        planetGeometry.setAttribute('color', new THREE.BufferAttribute(planetColors, 3));
+
+        const planetMaterial = new THREE.PointsMaterial({
+            size: 0.3,
+            map: orangeParticleTexture,
+            vertexColors: true,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            opacity: 0.95
+        });
+
+        const planetPoints = new THREE.Points(planetGeometry, planetMaterial);
+        planetGroup.add(planetPoints);
+
+        function createRing(innerRadius, outerRadius, particleCount, tiltAngleX, tiltAngleZ) {
+            const ringGeometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3);
+            const sizes = new Float32Array(particleCount);
+
+            for (let i = 0; i < particleCount; i++) {
+                const theta = Math.random() * Math.PI * 2;
+                const r = innerRadius + Math.random() * (outerRadius - innerRadius);
+                
+                const yVar = (Math.random() - 0.5) * 0.4;
+
+                positions[i * 3] = r * Math.cos(theta);
+                positions[i * 3 + 1] = yVar;
+                positions[i * 3 + 2] = r * Math.sin(theta);
+
+                sizes[i] = Math.random();
+            }
+
+            ringGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+            const ringMaterial = new THREE.PointsMaterial({
+                size: 0.55,
+                map: whiteParticleTexture,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                opacity: 0.85,
+                color: 0xeeeeff
+            });
+
+            const ringPoints = new THREE.Points(ringGeometry, ringMaterial);
+            ringPoints.rotation.x = tiltAngleX;
+            ringPoints.rotation.z = tiltAngleZ;
+            
+            return ringPoints;
+        }
+
+        const ring1 = createRing(13, 19, 4500, Math.PI / 6, Math.PI / 12);
+        planetGroup.add(ring1);
+
+        const ring2 = createRing(15, 23, 3000, -Math.PI / 4, -Math.PI / 8);
+        planetGroup.add(ring2);
+
+        let lastFrameTime = performance.now();
+        let frameCount = 0;
+        let lastHandActiveTime = 0;
+        const GESTURE_TIMEOUT_MS = 1500;
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.55,
+            minTrackingConfidence: 0.55
+        });
+
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({ image: videoElement });
+            },
+            width: 320,
+            height: 240
+        });
+
+        hands.onResults((results) => {
+            if (outputCanvas.width !== videoElement.videoWidth || outputCanvas.height !== videoElement.videoHeight) {
+                outputCanvas.width = videoElement.videoWidth;
+                outputCanvas.height = videoElement.videoHeight;
+            }
+
+            canvasCtx.fillStyle = '#000000';
+            canvasCtx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+
+            if (uiStatusText.textContent.includes("Inicializando")) {
+                uiStatusDot.classList.remove('bg-red-500');
+                uiStatusDot.classList.add('bg-green-500');
+                uiStatusText.textContent = window.innerWidth > 768 ? "Webcam Conectada y Activa" : "";
+            }
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                lastHandActiveTime = performance.now();
+                const landmarks = results.multiHandLandmarks[0];
+                uiMetricLandmarks.textContent = "21 / 21";
+
+                drawHandSkeleton(landmarks);
+
+                const fingersExtended = checkFingersExtended(landmarks);
+                const extendedCount = fingersExtended.reduce((sum, current) => sum + (current ? 1 : 0), 0);
+
+                isFistGesture = (extendedCount <= 1);
+                isOpenHandGesture = (extendedCount >= 4);
+
+                const wrist = landmarks[0];
+                const indexMcp = landmarks[5];
+                const pinkyMcp = landmarks[17];
+                
+                const palmCenterX = (wrist.x + indexMcp.x + pinkyMcp.x) / 3;
+                const palmCenterY = (wrist.y + indexMcp.y + pinkyMcp.y) / 3;
+
+                const deltaX = (palmCenterX - 0.5) * 2;
+                const deltaY = (palmCenterY - 0.5) * 2;
+
+                cameraTheta += -deltaX * 0.035;
+                cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi + deltaY * 0.02));
+
+                const handScale = Math.hypot(landmarks[9].x - landmarks[0].x, landmarks[9].y - landmarks[0].y);
+
+                resetUIGestureIndicators();
+
+                if (isFistGesture) {
+                    uiGestureOut.classList.add('bg-blue-500/20', 'border-blue-500/50', 'scale-[1.02]');
+                    
+                    const speedMultiplier = Math.max(0.1, 1.0 - (handScale * 4));
+                    zoomSpeed += 0.04 * speedMultiplier;
+                    targetCameraRadius += zoomSpeed;
+
+                } else if (isOpenHandGesture) {
+                    uiGestureIn.classList.add('bg-amber-500/20', 'border-amber-500/50', 'scale-[1.02]');
+                    
+                    const speedMultiplier = Math.max(0.1, handScale * 3.5);
+                    zoomSpeed += 0.05 * speedMultiplier;
+                    targetCameraRadius -= zoomSpeed;
+
+                } else {
+                    uiGestureRotate.classList.add('bg-orange-500/20', 'border-orange-500/50', 'scale-[1.02]');
+                    zoomSpeed *= 0.85;
+                }
+
+                targetCameraRadius = Math.max(CAMERA_MIN_DISTANCE, Math.min(CAMERA_MAX_DISTANCE, targetCameraRadius));
+
+            } else {
+                uiMetricLandmarks.textContent = "0 / 21";
+                resetUIGestureIndicators();
+                
+                if (performance.now() - lastHandActiveTime > GESTURE_TIMEOUT_MS) {
+                    zoomSpeed *= 0.85;
+                }
+            }
+        });
+
+        function checkFingersExtended(landmarks) {
+            const fingers = [false, false, false, false, false];
+
+            const thumbTip = landmarks[4];
+            const thumbIp = landmarks[3];
+            const thumbMcp = landmarks[2];
+            
+            const isThumbExtended = Math.abs(thumbTip.x - thumbMcp.x) > Math.abs(thumbIp.x - thumbMcp.x);
+            fingers[0] = isThumbExtended;
+
+            fingers[1] = (landmarks[8].y < landmarks[6].y);
+            fingers[2] = (landmarks[12].y < landmarks[10].y);
+            fingers[3] = (landmarks[16].y < landmarks[14].y);
+            fingers[4] = (landmarks[20].y < landmarks[18].y);
+
+            return fingers;
+        }
+
+        function drawHandSkeleton(landmarks) {
+            canvasCtx.lineWidth = 3;
+            
+            let connectionColor = '#f97316';
+            if (isFistGesture) connectionColor = '#3b82f6';
+            if (isOpenHandGesture) connectionColor = '#fbbf24';
+
+            const connections = [
+                [0, 1], [1, 2], [2, 3], [3, 4],
+                [0, 5], [5, 6], [6, 7], [7, 8],
+                [9, 10], [10, 11], [11, 12],
+                [13, 14], [14, 15], [15, 16],
+                [0, 17], [17, 18], [18, 19], [19, 20],
+                [5, 9], [9, 13], [13, 17]
+            ];
+
+            connections.forEach(([p1, p2]) => {
+                const pt1 = landmarks[p1];
+                const pt2 = landmarks[p2];
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(pt1.x * outputCanvas.width, pt1.y * outputCanvas.height);
+                canvasCtx.lineTo(pt2.x * outputCanvas.width, pt2.y * outputCanvas.height);
+                canvasCtx.strokeStyle = connectionColor;
+                canvasCtx.shadowBlur = 4;
+                canvasCtx.shadowColor = connectionColor;
+                canvasCtx.stroke();
+            });
+
+            canvasCtx.shadowBlur = 0;
+            for (let i = 0; i < landmarks.length; i++) {
+                const x = landmarks[i].x * outputCanvas.width;
+                const y = landmarks[i].y * outputCanvas.height;
+                
+                canvasCtx.beginPath();
+                canvasCtx.arc(x, y, 4, 0, 2 * Math.PI);
+                if ([4, 8, 12, 16, 20].includes(i)) {
+                    canvasCtx.fillStyle = '#ffffff';
+                    canvasCtx.arc(x, y, 1.5, 0, 2 * Math.PI);
+                } else {
+                    canvasCtx.fillStyle = connectionColor;
+                }
+                canvasCtx.fill();
+            }
+        }
+
+        function resetUIGestureIndicators() {
+            uiGestureRotate.className = "flex items-center gap-2 sm:gap-3 p-1.5 sm:p-2 rounded-lg bg-white/5 border border-white/0 transition-all duration-300";
+            uiGestureIn.className = "flex items-center gap-2 sm:gap-3 p-1.5 sm:p-2 rounded-lg bg-white/5 border border-white/0 transition-all duration-300";
+            uiGestureOut.className = "flex items-center gap-2 sm:gap-3 p-1.5 sm:p-2 rounded-lg bg-white/5 border border-white/0 transition-all duration-300";
+        }
+
+        gestureToggleBtn.addEventListener('click', () => {
+            gesturePanelContent.classList.toggle('open');
+            if (gesturePanelContent.classList.contains('open')) {
+                gestureArrow.style.transform = 'rotate(180deg)';
+            } else {
+                gestureArrow.style.transform = 'rotate(0deg)';
+            }
+        });
+
+        window.onload = function () {
+            cameraUtils.start()
+                .then(() => {
+                    uiStatusDot.classList.remove('bg-red-500');
+                    uiStatusDot.classList.add('bg-green-500');
+                    uiStatusText.textContent = window.innerWidth > 768 ? "Webcam Conectada y Activa" : "";
+                })
+                .catch(err => {
+                    console.error("Error al arrancar la cámara: ", err);
+                    uiStatusText.textContent = window.innerWidth > 768 ? "Error: Sin acceso a Webcam" : "";
+                });
+                
+            animateLoop();
+        }
+
+        function animateLoop() {
+            requestAnimationFrame(animateLoop);
+
+            const time = performance.now() * 0.001;
+
+            planetPoints.rotation.y = -time * 0.08;
+            ring1.rotation.y = -time * 0.03;
+            ring2.rotation.y = -time * 0.05;
+
+            currentCameraRadius += (targetCameraRadius - currentCameraRadius) * 0.08;
+
+            const targetX = currentCameraRadius * Math.sin(cameraPhi) * Math.sin(cameraTheta);
+            const targetY = currentCameraRadius * Math.cos(cameraPhi);
+            const targetZ = currentCameraRadius * Math.sin(cameraPhi) * Math.cos(cameraTheta);
+
+            camera.position.set(targetX, targetY, targetZ);
+            camera.lookAt(0, 0, 0);
+
+            uiMetricDist.textContent = currentCameraRadius.toFixed(2);
+            uiMetricSpeed.textContent = zoomSpeed.toFixed(4);
+
+            frameCount++;
+            const currentTime = performance.now();
+            if (currentTime >= lastFrameTime + 1000) {
+                uiFpsCounter.textContent = frameCount;
+                frameCount = 0;
+                lastFrameTime = currentTime;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            if (window.innerWidth <= 768) {
+                uiStatusText.textContent = "";
+            } else if (uiStatusDot.classList.contains('bg-green-500')) {
+                uiStatusText.textContent = "Webcam Conectada y Activa";
+            } else {
+                uiStatusText.textContent = "Error: Sin acceso a Webcam";
+            }
+        });
+    </script>
+</body>
+</html>
